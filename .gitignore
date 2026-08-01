@@ -1,0 +1,4 @@
+__build
+.envrc
+.cache
+compile_commands.json
