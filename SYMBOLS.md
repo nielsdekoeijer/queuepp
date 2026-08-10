@@ -25,16 +25,18 @@
 
 ```x86asm
 0000000000000020 <new_spsc_try_prepare_push>:
-  20:	mov    edx,DWORD PTR [rdi+0x4]
-  23:	mov    eax,DWORD PTR [rdi]
-  25:	add    edx,DWORD PTR [rdi+0x8]
-  28:	cmp    eax,edx
-  2a:	mov    edx,0xffffffff
-  2f:	cmove  eax,edx
-  32:	xor    edx,edx
-  34:	xor    edi,edi
-  36:	ret
-  37:	nop    WORD PTR [rax+rax*1+0x0]
+  20:	mov    edx,DWORD PTR [rdi+0x8]
+  23:	mov    ecx,DWORD PTR [rdi+0x4]
+  26:	add    edx,ecx
+  28:	mov    eax,DWORD PTR [rdi]
+  2a:	cmp    eax,edx
+  2c:	mov    edx,0xffffffff
+  31:	cmove  eax,edx
+  34:	xor    edx,edx
+  36:	xor    ecx,ecx
+  38:	xor    edi,edi
+  3a:	ret
+  3b:	nop    DWORD PTR [rax+rax*1+0x0]
 ```
 
 ## prepare_push
@@ -83,18 +85,19 @@
 
 ```x86asm
 0000000000000190 <new_spsc_prepare_push>:
- 190:	mov    esi,DWORD PTR [rdi+0x4]
- 193:	mov    edx,DWORD PTR [rdi]
- 195:	mov    eax,DWORD PTR [rdi+0x8]
- 198:	add    eax,esi
- 19a:	cmp    eax,edx
- 19c:	je     1a2 <new_spsc_prepare_push+0x12>
- 1a2:	mov    eax,edx
- 1a4:	xor    edx,edx
- 1a6:	xor    esi,esi
- 1a8:	xor    edi,edi
- 1aa:	ret
- 1ab:	nop    DWORD PTR [rax+rax*1+0x0]
+ 190:	mov    eax,DWORD PTR [rdi+0x8]
+ 193:	mov    esi,DWORD PTR [rdi+0x4]
+ 196:	lea    ecx,[rax+rsi*1]
+ 199:	mov    edx,DWORD PTR [rdi]
+ 19b:	cmp    ecx,edx
+ 19d:	je     1a3 <new_spsc_prepare_push+0x13>
+ 1a3:	mov    eax,edx
+ 1a5:	xor    edx,edx
+ 1a7:	xor    ecx,ecx
+ 1a9:	xor    esi,esi
+ 1ab:	xor    edi,edi
+ 1ad:	ret
+ 1ae:	xchg   ax,ax
 ```
 
 ## commit_push
