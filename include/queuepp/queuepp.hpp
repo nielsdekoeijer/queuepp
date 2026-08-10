@@ -19,6 +19,24 @@ namespace queuepp {
 
 namespace detail {
 
+/// Blocks the calling thread until *addr != expected (linux futex WAIT)
+ALWAYS_INLINE void futex_wait(std::atomic<std::uint32_t>* addr, std::uint32_t expected)
+{
+    register long r10 asm("r10") = 0;
+    register long r8 asm("r8") = 0;
+    register long r9 asm("r9") = 0;
+
+    long ret;
+    asm volatile("syscall"
+        : "=a"(ret)
+        : "a"((long)SYS_futex),
+          "D"(addr),
+          "S"((long)(FUTEX_WAIT | FUTEX_PRIVATE_FLAG)),
+          "d"((long)expected),
+          "r"(r10), "r"(r8), "r"(r9)
+        : "rcx", "r11", "memory");
+}
+
 /// Wakes one thread blocked on *addr (linux futex WAKE)
 ALWAYS_INLINE void futex_wake(std::atomic<std::uint32_t>* addr)
 {
@@ -107,21 +125,8 @@ protected:
     {
         std::atomic_fetch_add_explicit(&m_waiters.tail, 1u, std::memory_order_relaxed);
 
-        auto* addr = &m_tail.committed;
-        register long r10 asm("r10") = 0;
-        register long r8 asm("r8") = 0;
-        register long r9 asm("r9") = 0;
-        long ret;
-        asm volatile("syscall"
-            : "=a"(ret)
-            : "a"((long)SYS_futex),
-              "D"(addr),
-              "S"((long)(FUTEX_WAIT | FUTEX_PRIVATE_FLAG)),
-              "d"((long)tail),
-              "r"(r10), "r"(r8), "r"(r9)
-            : "rcx", "r11", "memory");
-
-        tail = std::atomic_load_explicit(addr, std::memory_order_acquire);
+        detail::futex_wait(&m_tail.committed, tail);
+        tail = std::atomic_load_explicit(&m_tail.committed, std::memory_order_acquire);
 
         std::atomic_fetch_sub_explicit(&m_waiters.tail, 1u, std::memory_order_relaxed);
         return tail;
@@ -138,21 +143,8 @@ protected:
     {
         std::atomic_fetch_add_explicit(&m_waiters.head, 1u, std::memory_order_relaxed);
 
-        auto* addr = &m_head.committed;
-        register long r10 asm("r10") = 0;
-        register long r8 asm("r8") = 0;
-        register long r9 asm("r9") = 0;
-        long ret;
-        asm volatile("syscall"
-            : "=a"(ret)
-            : "a"((long)SYS_futex),
-              "D"(addr),
-              "S"((long)(FUTEX_WAIT | FUTEX_PRIVATE_FLAG)),
-              "d"((long)head),
-              "r"(r10), "r"(r8), "r"(r9)
-            : "rcx", "r11", "memory");
-
-        head = std::atomic_load_explicit(addr, std::memory_order_acquire);
+        detail::futex_wait(&m_head.committed, head);
+        head = std::atomic_load_explicit(&m_head.committed, std::memory_order_acquire);
 
         std::atomic_fetch_sub_explicit(&m_waiters.head, 1u, std::memory_order_relaxed);
         return head;
@@ -190,7 +182,7 @@ protected:
         std::uint32_t tail = std::atomic_load_explicit(&m_tail.committed, std::memory_order_acquire);
         std::uint32_t head = std::atomic_load_explicit(&m_head.pending, std::memory_order_relaxed);
 
-        [[unlikely]] while (FreeCount(size, head, tail) < c) {
+        [[unlikely]] while ((size - (head - tail)) < c) {
             if constexpr (R == RuntimeMode::WAITFREE) {
                 return std::nullopt;
             } else {
