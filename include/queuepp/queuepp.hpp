@@ -7,15 +7,55 @@
 #include <optional>
 #include <stdexcept>
 
+#include <linux/futex.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+#define ALWAYS_INLINE __attribute__((always_inline)) inline
+
+#define NEVER_INLINE __attribute__((noinline, cold))
 
 namespace queuepp {
 
 namespace detail {
-/// Represents a `Single` Consumer / Producer for our queue
-template <typename UnsignedType>
+
+/// Blocks the calling thread until *addr != expected (linux futex WAIT)
+ALWAYS_INLINE void futex_wait(std::atomic<std::uint32_t>* addr, std::uint32_t expected)
+{
+    register long r10 asm("r10") = 0;
+    register long r8 asm("r8") = 0;
+    register long r9 asm("r9") = 0;
+
+    long ret;
+    asm volatile("syscall"
+        : "=a"(ret)
+        : "a"((long)SYS_futex),
+          "D"(addr),
+          "S"((long)(FUTEX_WAIT | FUTEX_PRIVATE_FLAG)),
+          "d"((long)expected),
+          "r"(r10), "r"(r8), "r"(r9)
+        : "rcx", "r11", "memory");
+}
+
+/// Wakes one thread blocked on *addr (linux futex WAKE)
+ALWAYS_INLINE void futex_wake(std::atomic<std::uint32_t>* addr)
+{
+    long ret;
+    asm volatile("syscall"
+        : "=a"(ret)
+        : "a"((long)SYS_futex),
+          "D"(addr),
+          "S"((long)(FUTEX_WAKE | FUTEX_PRIVATE_FLAG)),
+          "d"(1L)
+        : "rcx", "r11", "memory");
+}
+
+/// Represents the state for a `Single` Consumer / Producer queue.
+///
+/// Note that a union is used here for purposes of readability and to be able to more easily generalize to `Multi`
+/// queue variants. Fields are uint32_t for direct futex compatibility.
 union SingleSideQueue {
-    static_assert(std::atomic<UnsignedType>::is_always_lock_free);
-    std::atomic<UnsignedType> pending, committed { 0 };
+    std::atomic<std::uint32_t> pending, committed { 0 };
 
     SingleSideQueue() = default;
     SingleSideQueue(SingleSideQueue&) = delete;
@@ -25,11 +65,13 @@ union SingleSideQueue {
 };
 
 
-/// Represents a `Single` Waiter for our queue
-template <typename UnsignedType>
+/// Represents the waiters for a `Single` Consumer / Producer queue.
+///
+/// For SPSC queues, tail and head waiters share the same memory location since the waiter count
+/// is only used as a hint for "should I wake?". The actual wait happens on different futex
+/// addresses (head.committed vs tail.committed), so sharing is safe — worst case is a spurious wake.
 union SingleWaiters {
-    static_assert(std::atomic<UnsignedType>::is_always_lock_free);
-    std::atomic<UnsignedType> tail, head { 0 };
+    std::atomic<std::uint32_t> tail, head { 0 };
 
     SingleWaiters() = default;
     SingleWaiters(SingleWaiters&) = delete;
@@ -40,17 +82,17 @@ union SingleWaiters {
 
 } // namespace detail
 
-/// SPSC lockfree queue
-template < //
-    typename ElementType,
-    typename UnsignedType = std::uint64_t,
-    std::size_t CacheSize = 128>
+/// Provides indices for an underlying buffer for a SPSC lockfree queue
+template <typename ElementType, std::size_t CacheSize = 128>
 class SPSCQueueIndexer {
+public:
+    using UnsignedType = std::uint32_t;
+
 protected:
     const UnsignedType m_size;
-    alignas(CacheSize) detail::SingleSideQueue<UnsignedType> m_head;
-    alignas(CacheSize) detail::SingleSideQueue<UnsignedType> m_tail;
-    alignas(CacheSize) detail::SingleWaiters<UnsignedType> m_waiters;
+    alignas(CacheSize) detail::SingleSideQueue m_head;
+    alignas(CacheSize) detail::SingleSideQueue m_tail;
+    detail::SingleWaiters m_waiters;
 
 public:
     explicit SPSCQueueIndexer(const UnsignedType size)
@@ -68,75 +110,80 @@ public:
     SPSCQueueIndexer& operator=(SPSCQueueIndexer&&) = delete;
 
 protected:
-    UnsignedType inline FreeCount(const UnsignedType head, const UnsignedType tail) const
-    {
-        return m_size - (head - tail);
-    }
-
+    /// Returns how many entries are currently occupied (head - tail)
     UnsignedType inline UsedCount(const UnsignedType head, const UnsignedType tail) const
     {
         return head - tail;
     }
 
-    inline void WaitTail(UnsignedType& tail)
+    /// Returns how many entries can still be pushed (capacity - used)
+    UnsignedType inline FreeCount(const UnsignedType head, const UnsignedType tail) const
     {
-        std::atomic_fetch_add_explicit(&m_waiters.tail, 1, std::memory_order_seq_cst);
-
-        std::atomic_wait_explicit(&m_tail.committed, tail, std::memory_order_seq_cst);
-        tail = std::atomic_load_explicit(&m_tail.committed, std::memory_order_seq_cst);
-
-        std::atomic_fetch_sub_explicit(&m_waiters.tail, 1, std::memory_order_seq_cst);
+        return m_size - UsedCount(head, tail);
     }
 
-    inline void WaitHead(UnsignedType& head)
+
+    /// Blocks until the consumer commits, then reloads tail
+    NEVER_INLINE void WaitTail(UnsignedType& tail)
     {
-        std::atomic_fetch_add_explicit(&m_waiters.head, 1, std::memory_order_seq_cst);
+        std::atomic_fetch_add_explicit(&m_waiters.tail, 1u, std::memory_order_relaxed);
 
-        std::atomic_wait_explicit(&m_head.committed, head, std::memory_order_seq_cst);
-        head = std::atomic_load_explicit(&m_head.committed, std::memory_order_seq_cst);
+        detail::futex_wait(&m_tail.committed, tail);
+        tail = std::atomic_load_explicit(&m_tail.committed, std::memory_order_acquire);
 
-        std::atomic_fetch_sub_explicit(&m_waiters.head, 1, std::memory_order_seq_cst);
+        std::atomic_fetch_sub_explicit(&m_waiters.tail, 1u, std::memory_order_relaxed);
     }
 
-    inline void WakeTail()
+    /// Wakes one producer blocked on tail; NEVER_INLINE keeps syscall clobbers off the fast path
+    NEVER_INLINE void WakeTail()
     {
-        std::atomic_notify_one(&m_tail.committed);
+        detail::futex_wake(&m_tail.committed);
     }
 
-    inline void WakeHead()
+    /// Blocks until the producer commits, then reloads head
+    NEVER_INLINE void WaitHead(UnsignedType& head)
     {
-        std::atomic_notify_one(&m_head.committed);
+        std::atomic_fetch_add_explicit(&m_waiters.head, 1u, std::memory_order_relaxed);
+
+        detail::futex_wait(&m_head.committed, head);
+        head = std::atomic_load_explicit(&m_head.committed, std::memory_order_acquire);
+
+        std::atomic_fetch_sub_explicit(&m_waiters.head, 1u, std::memory_order_relaxed);
+    }
+
+    /// Wakes one consumer blocked on head; NEVER_INLINE keeps syscall clobbers off the fast path
+    NEVER_INLINE void WakeHead()
+    {
+        detail::futex_wake(&m_head.committed);
     }
 
     enum class RuntimeMode {
-        TRY,
-        BLOCK,
+        WAITFREE,
+        BLOCKING,
     };
 
     enum class CountMode {
         SINGLE,
-        MANY,
+        MULTI,
     };
 
     template <RuntimeMode M>
-    using PrepareReturnType = std::conditional_t<M == RuntimeMode::TRY, std::optional<UnsignedType>, UnsignedType>;
+    using PrepareReturnType = std::conditional_t<M == RuntimeMode::WAITFREE, std::optional<UnsignedType>, UnsignedType>;
 
+    /// Reserves index(es) for pushing; blocks or returns nullopt depending on RuntimeMode
     template <RuntimeMode R, CountMode C>
     [[nodiscard]] PrepareReturnType<R> GenericPreparePush([[maybe_unused]] const UnsignedType count = 1)
     {
-        UnsignedType c;
-        if constexpr (C == CountMode::SINGLE) {
-            c = 1;
-        } else {
+        UnsignedType c = 1;
+        if constexpr (C == CountMode::MULTI) {
             c = count;
         }
 
-        UnsignedType tail = std::atomic_load_explicit(&m_tail.committed, std::memory_order_seq_cst);
-
+        UnsignedType tail = std::atomic_load_explicit(&m_tail.committed, std::memory_order_acquire);
         UnsignedType head = std::atomic_load_explicit(&m_head.pending, std::memory_order_relaxed);
 
-        while (FreeCount(head, tail) < c) {
-            if constexpr (R == RuntimeMode::TRY) {
+        [[unlikely]] while (FreeCount(head, tail) < c) {
+            if constexpr (R == RuntimeMode::WAITFREE) {
                 return std::nullopt;
             } else {
                 WaitTail(tail);
@@ -146,39 +193,36 @@ protected:
         return head;
     }
 
+    /// Publishes pushed entries and wakes a blocked consumer if any
     template <CountMode C>
     void GenericCommitPush([[maybe_unused]] const UnsignedType count = 1)
     {
-        UnsignedType c;
-        if constexpr (C == CountMode::SINGLE) {
-            c = 1;
-        } else {
+        UnsignedType c = 1;
+        if constexpr (C == CountMode::MULTI) {
             c = count;
         }
 
-        std::atomic_fetch_add_explicit(&m_head.committed, c, std::memory_order_seq_cst);
+        std::atomic_fetch_add_explicit(&m_head.committed, c, std::memory_order_release);
 
-        [[unlikely]] if (std::atomic_load_explicit(&m_waiters.head, std::memory_order_seq_cst)) {
+        [[unlikely]] if (std::atomic_load_explicit(&m_waiters.head, std::memory_order_relaxed)) {
             WakeHead();
         }
     }
 
+    /// Reserves index(es) for consuming; blocks or returns nullopt depending on RuntimeMode
     template <RuntimeMode R, CountMode C>
     [[nodiscard]] PrepareReturnType<R> GenericPrepareConsume([[maybe_unused]] const UnsignedType count = 1)
     {
-        UnsignedType c;
-        if constexpr (C == CountMode::SINGLE) {
-            c = 1;
-        } else {
+        UnsignedType c = 1;
+        if constexpr (C == CountMode::MULTI) {
             c = count;
         }
 
-        UnsignedType head = std::atomic_load_explicit(&m_head.committed, std::memory_order_seq_cst);
-
+        UnsignedType head = std::atomic_load_explicit(&m_head.committed, std::memory_order_acquire);
         UnsignedType tail = std::atomic_load_explicit(&m_tail.pending, std::memory_order_relaxed);
 
-        while (UsedCount(head, tail) < c) {
-            if constexpr (R == RuntimeMode::TRY) {
+        [[unlikely]] while (UsedCount(head, tail) < c) {
+            if constexpr (R == RuntimeMode::WAITFREE) {
                 return std::nullopt;
             } else {
                 WaitHead(head);
@@ -188,92 +232,102 @@ protected:
         return tail;
     }
 
+    /// Frees consumed entries and wakes a blocked producer if any
     template <CountMode C>
     void GenericCommitConsume([[maybe_unused]] const UnsignedType count = 1)
     {
-        UnsignedType c;
-        if constexpr (C == CountMode::SINGLE) {
-            c = 1;
-        } else {
+        UnsignedType c = 1;
+        if constexpr (C == CountMode::MULTI) {
             c = count;
         }
 
-        std::atomic_fetch_add_explicit(&m_tail.committed, c, std::memory_order_seq_cst);
+        std::atomic_fetch_add_explicit(&m_tail.committed, c, std::memory_order_release);
 
-        [[unlikely]] if (std::atomic_load_explicit(&m_waiters.tail, std::memory_order_seq_cst)) {
+        [[unlikely]] if (std::atomic_load_explicit(&m_waiters.tail, std::memory_order_relaxed)) {
             WakeTail();
         }
     }
 
 public:
+    /// Non-blocking batch push reservation; returns start index or nullopt if insufficient space
     [[nodiscard]] inline std::optional<UnsignedType> TryPreparePushMany(const UnsignedType count)
     {
-        return GenericPreparePush<RuntimeMode::TRY, CountMode::MANY>(count);
+        return GenericPreparePush<RuntimeMode::WAITFREE, CountMode::MULTI>(count);
     }
 
+    /// Blocking batch push reservation; waits until `count` slots are free
     [[nodiscard]] inline UnsignedType PreparePushMany(const UnsignedType count)
     {
-        return GenericPreparePush<RuntimeMode::BLOCK, CountMode::MANY>(count);
+        return GenericPreparePush<RuntimeMode::BLOCKING, CountMode::MULTI>(count);
     }
 
+    /// Non-blocking single push reservation; returns index or nullopt if full
     [[nodiscard]] inline std::optional<UnsignedType> TryPreparePush()
     {
-        return GenericPreparePush<RuntimeMode::TRY, CountMode::SINGLE>();
+        return GenericPreparePush<RuntimeMode::WAITFREE, CountMode::SINGLE>();
     }
 
+    /// Blocking single push reservation; waits until a slot is free
     [[nodiscard]] inline UnsignedType PreparePush()
     {
-        return GenericPreparePush<RuntimeMode::BLOCK, CountMode::SINGLE>();
+        return GenericPreparePush<RuntimeMode::BLOCKING, CountMode::SINGLE>();
     }
 
+    /// Commits a single pushed entry, making it visible to the consumer
     inline void CommitPush()
     {
         GenericCommitPush<CountMode::SINGLE>();
     }
 
+    /// Commits `count` pushed entries, making them visible to the consumer
     inline void CommitPushMany(const UnsignedType count)
     {
-        GenericCommitPush<CountMode::MANY>(count);
+        GenericCommitPush<CountMode::MULTI>(count);
     }
 
+    /// Non-blocking batch consume reservation; returns start index or nullopt if insufficient entries
     [[nodiscard]] inline std::optional<UnsignedType> TryPrepareConsumeMany(const UnsignedType count)
     {
-        return GenericPrepareConsume<RuntimeMode::TRY, CountMode::MANY>(count);
+        return GenericPrepareConsume<RuntimeMode::WAITFREE, CountMode::MULTI>(count);
     }
 
+    /// Blocking batch consume reservation; waits until `count` entries are available
     [[nodiscard]] inline UnsignedType PrepareConsumeMany(const UnsignedType count)
     {
-        return GenericPrepareConsume<RuntimeMode::BLOCK, CountMode::MANY>(count);
+        return GenericPrepareConsume<RuntimeMode::BLOCKING, CountMode::MULTI>(count);
     }
 
+    /// Non-blocking single consume reservation; returns index or nullopt if empty
     [[nodiscard]] inline std::optional<UnsignedType> TryPrepareConsume()
     {
-        return GenericPrepareConsume<RuntimeMode::TRY, CountMode::SINGLE>();
+        return GenericPrepareConsume<RuntimeMode::WAITFREE, CountMode::SINGLE>();
     }
 
+    /// Blocking single consume reservation; waits until an entry is available
     [[nodiscard]] inline UnsignedType PrepareConsume()
     {
-        return GenericPrepareConsume<RuntimeMode::BLOCK, CountMode::SINGLE>();
+        return GenericPrepareConsume<RuntimeMode::BLOCKING, CountMode::SINGLE>();
     }
 
+    /// Commits a single consumed entry, freeing the slot for the producer
     inline void CommitConsume()
     {
         GenericCommitConsume<CountMode::SINGLE>();
     }
 
+    /// Commits `count` consumed entries, freeing them for the producer
     inline void CommitConsumeMany(const UnsignedType count)
     {
-        GenericCommitConsume<CountMode::MANY>(count);
+        GenericCommitConsume<CountMode::MULTI>(count);
     }
 };
 
-template < //
-    typename ElementType,
-    typename UnsignedType = std::uint64_t,
-    std::size_t CacheSize = 128>
-class SPSCQueueUnmanaged : public SPSCQueueIndexer<ElementType, UnsignedType, CacheSize> {
+/// Non-owning SPSC lockfree queue
+template <typename ElementType, std::size_t CacheSize = 128>
+class SPSCQueueUnmanaged : public SPSCQueueIndexer<ElementType, CacheSize> {
 protected:
-    using Base = SPSCQueueIndexer<ElementType, UnsignedType, CacheSize>;
+    using Base = SPSCQueueIndexer<ElementType, CacheSize>;
+    using UnsignedType = typename Base::UnsignedType;
 
     const UnsignedType m_mask;
 
@@ -295,9 +349,10 @@ public:
 
 protected:
     template <Base::RuntimeMode R>
-    using ReturnType = std::conditional_t<R == Base::RuntimeMode::TRY, bool, void>;
+    using ReturnType = std::conditional_t<R == Base::RuntimeMode::WAITFREE, bool, void>;
 
 
+    /// Copies `count` elements into the ring buffer, handling wraparound
     template <typename Backing, typename Source>
     void CopyIn(Backing& backing, const UnsignedType head, const Source& src, const UnsignedType count)
     {
@@ -319,6 +374,7 @@ protected:
         std::copy_n(s + first, count - first, b);
     }
 
+    /// Copies `count` elements out of the ring buffer, handling wraparound
     template <typename Backing, typename Destination>
     void CopyOut(const Backing& backing, const UnsignedType tail, Destination& dst, const UnsignedType count)
     {
@@ -340,6 +396,7 @@ protected:
         std::copy_n(b, count - first, d + first);
     }
 
+    /// Prepares, copies in, and commits a push in one operation
     template <Base::RuntimeMode R, Base::CountMode C, typename Backing, typename Source>
     ReturnType<R> GenericPush(Backing& backing, const Source& src, [[maybe_unused]] const UnsignedType count = 1)
     {
@@ -347,7 +404,7 @@ protected:
 
         const auto head = this->template GenericPreparePush<R, C>(count);
 
-        if constexpr (R == Base::RuntimeMode::TRY) {
+        if constexpr (R == Base::RuntimeMode::WAITFREE) {
             [[unlikely]] if (!head) {
                 return false;
             }
@@ -361,6 +418,7 @@ protected:
         }
     }
 
+    /// Prepares, copies out, and commits a consume in one operation
     template <Base::RuntimeMode R, Base::CountMode C, typename Backing, typename Destination>
     ReturnType<R> GenericPop(const Backing& backing, Destination& dst, [[maybe_unused]] const UnsignedType count = 1)
     {
@@ -368,7 +426,7 @@ protected:
 
         const auto tail = this->template GenericPrepareConsume<R, C>(count);
 
-        if constexpr (R == Base::RuntimeMode::TRY) {
+        if constexpr (R == Base::RuntimeMode::WAITFREE) {
             [[unlikely]] if (!tail) {
                 return false;
             }
@@ -383,52 +441,60 @@ protected:
     }
 
 public:
+    /// Non-blocking push of one element; returns false if full
     template <typename Backing, typename Source>
     [[nodiscard]] bool TryPush(Backing& backing, const Source& src)
     {
-        return GenericPush<Base::RuntimeMode::TRY, Base::CountMode::SINGLE>(backing, src);
+        return GenericPush<Base::RuntimeMode::WAITFREE, Base::CountMode::SINGLE>(backing, src);
     }
 
+    /// Blocking push of one element; waits until space is available
     template <typename Backing, typename Source>
     void Push(Backing& backing, const Source& src)
     {
-        GenericPush<Base::RuntimeMode::BLOCK, Base::CountMode::SINGLE>(backing, src);
+        GenericPush<Base::RuntimeMode::BLOCKING, Base::CountMode::SINGLE>(backing, src);
     }
 
+    /// Non-blocking batch push; returns false if insufficient space
     template <typename Backing, typename Source>
     [[nodiscard]] bool TryPushMany(Backing& backing, const Source& src, const UnsignedType count)
     {
-        return GenericPush<Base::RuntimeMode::TRY, Base::CountMode::MANY>(backing, src, count);
+        return GenericPush<Base::RuntimeMode::WAITFREE, Base::CountMode::MULTI>(backing, src, count);
     }
 
+    /// Blocking batch push; waits until `count` slots are free
     template <typename Backing, typename Source>
     void PushMany(Backing& backing, const Source& src, const UnsignedType count)
     {
-        GenericPush<Base::RuntimeMode::BLOCK, Base::CountMode::MANY>(backing, src, count);
+        GenericPush<Base::RuntimeMode::BLOCKING, Base::CountMode::MULTI>(backing, src, count);
     }
 
+    /// Non-blocking pop of one element; returns false if empty
     template <typename Backing, typename Destination>
     [[nodiscard]] bool TryPop(const Backing& backing, Destination& dst)
     {
-        return GenericPop<Base::RuntimeMode::TRY, Base::CountMode::SINGLE>(backing, dst);
+        return GenericPop<Base::RuntimeMode::WAITFREE, Base::CountMode::SINGLE>(backing, dst);
     }
 
+    /// Blocking pop of one element; waits until an entry is available
     template <typename Backing, typename Destination>
     void Pop(const Backing& backing, Destination& dst)
     {
-        GenericPop<Base::RuntimeMode::BLOCK, Base::CountMode::SINGLE>(backing, dst);
+        GenericPop<Base::RuntimeMode::BLOCKING, Base::CountMode::SINGLE>(backing, dst);
     }
 
+    /// Non-blocking batch pop; returns false if insufficient entries
     template <typename Backing, typename Destination>
     [[nodiscard]] bool TryPopMany(const Backing& backing, Destination& dst, const UnsignedType count)
     {
-        return GenericPop<Base::RuntimeMode::TRY, Base::CountMode::MANY>(backing, dst, count);
+        return GenericPop<Base::RuntimeMode::WAITFREE, Base::CountMode::MULTI>(backing, dst, count);
     }
 
+    /// Blocking batch pop; waits until `count` entries are available
     template <typename Backing, typename Destination>
     void PopMany(const Backing& backing, Destination& dst, const UnsignedType count)
     {
-        GenericPop<Base::RuntimeMode::BLOCK, Base::CountMode::MANY>(backing, dst, count);
+        GenericPop<Base::RuntimeMode::BLOCKING, Base::CountMode::MULTI>(backing, dst, count);
     }
 };
 

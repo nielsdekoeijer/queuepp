@@ -10,8 +10,13 @@ endif()
 
 find_package(Threads REQUIRED)
 
-add_executable(queue_bench src/bench.cpp)
+add_executable(bench src/bench.cpp)
+add_library(symbols src/symbols.cpp)
 
-target_include_directories(queue_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(queue_bench PRIVATE Threads::Threads)
-target_compile_options(queue_bench PRIVATE -O3 -march=native -Wall -Wextra)
+target_include_directories(bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(bench PRIVATE Threads::Threads)
+target_compile_options(bench PRIVATE -O3 -march=native -Wall -Wextra)
+
+target_include_directories(symbols PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(symbols PRIVATE Threads::Threads)
+target_compile_options(symbols PRIVATE -O3 -march=native -Wall -Wextra -g)
