@@ -63,6 +63,7 @@
   50:	lock addl $0x1,(%rbx)
   54:	mov    %r12,%rdi
   57:	call   5c <ref_spsc_prepare_push+0x3c>
+			58: R_X86_64_PLT32	atomic_wait-0x4
   5c:	mov    (%r12),%esi
   60:	lock subl $0x1,(%rbx)
   64:	lea    0x0(%r13,%rsi,1),%eax
@@ -105,6 +106,7 @@
   27:	mov    %edx,-0x1c(%rbp)
   2a:	mov    %rdi,-0x18(%rbp)
   2e:	call   33 <new_spsc_prepare_push+0x33>
+			2f: R_X86_64_PLT32	queuepp::SPSCQueueIndexer<float, 4ul>::WaitTail(unsigned int)-0x4
   33:	mov    -0x18(%rbp),%rdi
   37:	mov    -0x1c(%rbp),%edx
   3a:	mov    %eax,%esi
@@ -138,6 +140,7 @@
   92:	nopw   0x0(%rax,%rax,1)
   98:	mov    %rsi,%rdi
   9b:	jmp    a0 <ref_spsc_try_prepare_consume>
+			9c: R_X86_64_PLT32	atomic_wake_one-0x4
 ```
 
 ### new (queuepp.hpp)
@@ -154,6 +157,7 @@
   11:	ret
   12:	mov    %rsi,%rdi
   15:	jmp    1a <new_spsc_commit_push+0x1a>
+			16: R_X86_64_PLT32	queuepp::SPSCQueueIndexer<float, 4ul>::WakeHead()-0x4
 ```
 
 ## try_prepare_consume
@@ -212,6 +216,7 @@
   f0:	lock addl $0x1,(%rbx)
   f4:	mov    %r12,%rdi
   f7:	call   fc <ref_spsc_prepare_consume+0x3c>
+			f8: R_X86_64_PLT32	atomic_wait-0x4
   fc:	mov    (%r12),%esi
  100:	lock subl $0x1,(%rbx)
  104:	cmp    %esi,%r13d
@@ -247,6 +252,7 @@
   1a:	mov    %edx,-0xc(%rbp)
   1d:	mov    %rdi,-0x8(%rbp)
   21:	call   26 <new_spsc_prepare_consume+0x26>
+			22: R_X86_64_PLT32	queuepp::SPSCQueueIndexer<float, 4ul>::WaitHead(unsigned int)-0x4
   26:	mov    -0xc(%rbp),%edx
   29:	mov    -0x8(%rbp),%rdi
   2d:	mov    %eax,%esi
@@ -277,6 +283,7 @@
  136:	ret
  137:	nopw   0x0(%rax,%rax,1)
  140:	jmp    145 <ref_spsc_commit_consume+0x25>
+			141: R_X86_64_PLT32	atomic_wake_one-0x4
 ```
 
 ### new (queuepp.hpp)
@@ -293,5 +300,6 @@
   12:	ret
   13:	mov    %rsi,%rdi
   16:	jmp    1b <new_spsc_commit_consume+0x1b>
+			17: R_X86_64_PLT32	queuepp::SPSCQueueIndexer<float, 4ul>::WakeTail()-0x4
 ```
 

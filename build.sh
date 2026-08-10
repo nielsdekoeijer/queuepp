@@ -9,8 +9,8 @@ cmake --build "$BUILD_DIR" -j
 
 # Extract disassembly without raw bytes or color for clean markdown
 OBJDUMP="${OBJDUMP:-objdump}"
-DISASM_C=$($OBJDUMP -d -C --no-show-raw-insn "$BUILD_DIR/libsymbols_c.a")
-DISASM_CPP=$($OBJDUMP -d -C --no-show-raw-insn "$BUILD_DIR/libsymbols_cpp.a")
+DISASM_C=$($OBJDUMP -r -d -C --no-show-raw-insn "$BUILD_DIR/libsymbols_c.a")
+DISASM_CPP=$($OBJDUMP -r -d -C --no-show-raw-insn "$BUILD_DIR/libsymbols_cpp.a")
 
 # Function pairs to compare: "label|ref_symbol|new_symbol"
 PAIRS=(
