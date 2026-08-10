@@ -22,32 +22,13 @@ namespace detail {
 /// Blocks the calling thread until *addr != expected (linux futex WAIT)
 ALWAYS_INLINE void futex_wait(std::atomic<std::uint32_t>* addr, std::uint32_t expected)
 {
-    register long r10 asm("r10") = 0;
-    register long r8 asm("r8") = 0;
-    register long r9 asm("r9") = 0;
-
-    long ret;
-    asm volatile("syscall"
-        : "=a"(ret)
-        : "a"((long)SYS_futex),
-          "D"(addr),
-          "S"((long)(FUTEX_WAIT | FUTEX_PRIVATE_FLAG)),
-          "d"((long)expected),
-          "r"(r10), "r"(r8), "r"(r9)
-        : "rcx", "r11", "memory");
+    syscall(SYS_futex, addr, FUTEX_WAIT | FUTEX_PRIVATE_FLAG, expected, nullptr, nullptr, 0);
 }
 
 /// Wakes one thread blocked on *addr (linux futex WAKE)
 ALWAYS_INLINE void futex_wake(std::atomic<std::uint32_t>* addr)
 {
-    long ret;
-    asm volatile("syscall"
-        : "=a"(ret)
-        : "a"((long)SYS_futex),
-          "D"(addr),
-          "S"((long)(FUTEX_WAKE | FUTEX_PRIVATE_FLAG)),
-          "d"(1L)
-        : "rcx", "r11", "memory");
+    syscall(SYS_futex, addr, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1);
 }
 
 /// Represents the state for a `Single` Consumer / Producer queue.
