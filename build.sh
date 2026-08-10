@@ -10,7 +10,9 @@ cmake --build "$BUILD_DIR" -j
 "$BUILD_DIR/queue_bench" "$@"
 
 # Extract disassembly without raw bytes or color for clean markdown
-DISASM=$(objdump -d -C --no-show-raw-insn -Mintel "$BUILD_DIR/libsymbols.a")
+OBJDUMP="${OBJDUMP:-objdump}"
+DISASM_C=$($OBJDUMP -d -C --no-show-raw-insn "$BUILD_DIR/libsymbols_c.a")
+DISASM_CPP=$($OBJDUMP -d -C --no-show-raw-insn "$BUILD_DIR/libsymbols_cpp.a")
 
 # Function pairs to compare: "label|ref_symbol|new_symbol"
 PAIRS=(
@@ -23,9 +25,10 @@ PAIRS=(
 )
 
 extract_func() {
-    local sym="$1"
+    local disasm="$1"
+    local sym="$2"
     # Match from "<sym>:" until the next blank line (function separator)
-    echo "$DISASM" | sed -n "/^[0-9a-f]* <${sym}>:/,/^$/p" | head -n -1
+    echo "$disasm" | sed -n "/^[0-9a-f]* <${sym}>:/,/^$/p" | head -n -1
 }
 
 {
@@ -39,14 +42,14 @@ extract_func() {
         echo ""
         echo "### ref (queue.h)"
         echo ""
-        echo '```x86asm'
-        extract_func "$ref_sym"
+        echo '```asm'
+        extract_func "$DISASM_C" "$ref_sym"
         echo '```'
         echo ""
         echo "### new (queuepp.hpp)"
         echo ""
-        echo '```x86asm'
-        extract_func "$new_sym"
+        echo '```asm'
+        extract_func "$DISASM_CPP" "$new_sym"
         echo '```'
         echo ""
     done

@@ -2,10 +2,6 @@
 #define QUEUE_H
 
 #include <stdatomic.h>
-#include <atomic>
-using namespace std;
-
-extern "C" {
 
 /*
 
@@ -297,7 +293,6 @@ static inline int spsc_prepare_consume(SPSCQueue* queue)
 static inline void spsc_commit_consume(unsigned int prepared_index, SPSCQueue* queue)
 {
     sc_commit_consume(prepared_index, &queue->tail.committed.atomic_value, &queue->tail_waiters);
-}
 }
 
 

@@ -22,18 +22,17 @@
         pkgs = import nixpkgs {
           inherit system;
         };
+        cross = pkgs.pkgsCross.aarch64-multiplatform;
       in {
         # on `nix develop`
-        devShells.default = pkgs.mkShell {
-          nativeBuildInputs = [ pkgs.gcc pkgs.cmake];
+        devShells.default = cross.mkShell.override { stdenv = cross.clangStdenv; } {
+          nativeBuildInputs = [ pkgs.cmake ];
 
           # puts a nice hook, I like this
           shellHook = ''
             PS1="(dev) $PS1"
-            export CLANGD_FLAGS="--query-driver=${pkgs.gcc}/bin/*"
             export CMAKE_EXPORT_COMPILE_COMMANDS=1
           '';
         };
       });
 }
-
