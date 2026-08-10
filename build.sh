@@ -25,8 +25,9 @@ PAIRS=(
 extract_func() {
     local disasm="$1"
     local sym="$2"
-    # Match from "<sym>:" until the next blank line (function separator)
-    echo "$disasm" | sed -n "/^[0-9a-f]* <${sym}>:/,/^$/p" | head -n -1
+    # Match from "<sym>:" until the next blank line (function separator),
+    # strip trailing blank lines so the last function in an archive isn't truncated
+    echo "$disasm" | sed -n "/^[0-9a-f]* <${sym}>:/,/^$/p" | sed '/^$/d'
 }
 
 {
