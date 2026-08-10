@@ -7,8 +7,6 @@ OUT=SYMBOLS.md
 cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
 cmake --build "$BUILD_DIR" -j
 
-"$BUILD_DIR/queue_bench" "$@"
-
 # Extract disassembly without raw bytes or color for clean markdown
 OBJDUMP="${OBJDUMP:-objdump}"
 DISASM_C=$($OBJDUMP -d -C --no-show-raw-insn "$BUILD_DIR/libsymbols_c.a")
