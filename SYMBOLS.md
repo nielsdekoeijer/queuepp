@@ -25,9 +25,9 @@
 
 ```x86asm
 0000000000000020 <new_spsc_try_prepare_push>:
-  20:	mov    edx,DWORD PTR [rdi+0x8]
-  23:	mov    eax,DWORD PTR [rdi+0x4]
-  26:	add    edx,DWORD PTR [rdi]
+  20:	mov    edx,DWORD PTR [rdi+0x4]
+  23:	mov    eax,DWORD PTR [rdi]
+  25:	add    edx,DWORD PTR [rdi+0x8]
   28:	cmp    eax,edx
   2a:	mov    edx,0xffffffff
   2f:	cmove  eax,edx
@@ -89,10 +89,10 @@
  195:	sub    rsp,0x28
  199:	mov    rax,QWORD PTR fs:0x28
  1a2:	mov    QWORD PTR [rbp-0x18],rax
- 1a6:	mov    eax,DWORD PTR [rdi+0x8]
+ 1a6:	mov    eax,DWORD PTR [rdi+0x4]
  1a9:	mov    DWORD PTR [rbp-0x1c],eax
- 1ac:	mov    edx,DWORD PTR [rdi+0x4]
- 1af:	add    eax,DWORD PTR [rdi]
+ 1ac:	mov    edx,DWORD PTR [rdi]
+ 1ae:	add    eax,DWORD PTR [rdi+0x8]
  1b1:	cmp    edx,eax
  1b3:	je     1b9 <new_spsc_prepare_push+0x29>
  1b9:	mov    rax,QWORD PTR [rbp-0x18]
@@ -132,15 +132,15 @@
 
 ```x86asm
 00000000000001e0 <new_spsc_commit_push>:
- 1e0:	lock add DWORD PTR [rsi+0x4],0x1
- 1e5:	mov    eax,DWORD PTR [rsi+0xc]
- 1e8:	test   eax,eax
- 1ea:	jne    1f0 <new_spsc_commit_push+0x10>
- 1f0:	xor    eax,eax
- 1f2:	xor    esi,esi
- 1f4:	xor    edi,edi
- 1f6:	ret
- 1f7:	nop    WORD PTR [rax+rax*1+0x0]
+ 1e0:	lock add DWORD PTR [rsi],0x1
+ 1e4:	mov    eax,DWORD PTR [rsi+0xc]
+ 1e7:	test   eax,eax
+ 1e9:	jne    1ef <new_spsc_commit_push+0xf>
+ 1ef:	xor    eax,eax
+ 1f1:	xor    esi,esi
+ 1f3:	xor    edi,edi
+ 1f5:	ret
+ 1f6:	cs nop WORD PTR [rax+rax*1+0x0]
 ```
 
 ## try_prepare_consume
@@ -165,14 +165,15 @@
 
 ```x86asm
 00000000000000e0 <new_spsc_try_prepare_consume>:
-  e0:	mov    edx,DWORD PTR [rdi+0x4]
-  e3:	mov    eax,DWORD PTR [rdi+0x8]
-  e6:	cmp    edx,eax
-  e8:	mov    edx,0xffffffff
-  ed:	cmove  eax,edx
-  f0:	xor    edx,edx
-  f2:	xor    edi,edi
-  f4:	ret
+  e0:	mov    edx,DWORD PTR [rdi]
+  e2:	mov    eax,DWORD PTR [rdi+0x4]
+  e5:	cmp    edx,eax
+  e7:	mov    edx,0xffffffff
+  ec:	cmove  eax,edx
+  ef:	xor    edx,edx
+  f1:	xor    edi,edi
+  f3:	ret
+  f4:	nop
   f5:	data16 cs nop WORD PTR [rax+rax*1+0x0]
 ```
 
@@ -226,23 +227,23 @@
  205:	sub    rsp,0x28
  209:	mov    rax,QWORD PTR fs:0x28
  212:	mov    QWORD PTR [rbp-0x18],rax
- 216:	mov    eax,DWORD PTR [rdi+0x4]
- 219:	mov    DWORD PTR [rbp-0x1c],eax
- 21c:	mov    eax,DWORD PTR [rdi+0x8]
- 21f:	cmp    DWORD PTR [rbp-0x1c],eax
- 222:	je     228 <new_spsc_prepare_consume+0x28>
- 228:	mov    rdx,QWORD PTR [rbp-0x18]
- 22c:	sub    rdx,QWORD PTR fs:0x28
- 235:	jne    245 <new_spsc_prepare_consume+0x45>
- 237:	mov    rbx,QWORD PTR [rbp-0x8]
- 23b:	leave
- 23c:	xor    edx,edx
- 23e:	xor    ecx,ecx
- 240:	xor    esi,esi
- 242:	xor    edi,edi
- 244:	ret
- 245:	call   24a <new_spsc_prepare_consume+0x4a>
- 24a:	nop    WORD PTR [rax+rax*1+0x0]
+ 216:	mov    eax,DWORD PTR [rdi]
+ 218:	mov    DWORD PTR [rbp-0x1c],eax
+ 21b:	mov    eax,DWORD PTR [rdi+0x4]
+ 21e:	cmp    DWORD PTR [rbp-0x1c],eax
+ 221:	je     227 <new_spsc_prepare_consume+0x27>
+ 227:	mov    rdx,QWORD PTR [rbp-0x18]
+ 22b:	sub    rdx,QWORD PTR fs:0x28
+ 234:	jne    244 <new_spsc_prepare_consume+0x44>
+ 236:	mov    rbx,QWORD PTR [rbp-0x8]
+ 23a:	leave
+ 23b:	xor    edx,edx
+ 23d:	xor    ecx,ecx
+ 23f:	xor    esi,esi
+ 241:	xor    edi,edi
+ 243:	ret
+ 244:	call   249 <new_spsc_prepare_consume+0x49>
+ 249:	nop    DWORD PTR [rax+0x0]
 ```
 
 ## commit_consume
@@ -269,7 +270,7 @@
 
 ```x86asm
 0000000000000250 <new_spsc_commit_consume>:
- 250:	lock add DWORD PTR [rsi+0x8],0x1
+ 250:	lock add DWORD PTR [rsi+0x4],0x1
  255:	mov    eax,DWORD PTR [rsi+0xc]
  258:	test   eax,eax
  25a:	jne    260 <new_spsc_commit_consume+0x10>

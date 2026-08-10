@@ -89,9 +89,9 @@ public:
     using UnsignedType = std::uint32_t;
 
 protected:
-    const UnsignedType m_size;
     alignas(CacheSize) detail::SingleSideQueue m_head;
     alignas(CacheSize) detail::SingleSideQueue m_tail;
+    const UnsignedType m_size;
     detail::SingleWaiters m_waiters;
 
 public:
