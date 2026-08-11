@@ -30,6 +30,16 @@ extract_func() {
     echo "$disasm" | sed -n "/^[0-9a-f]* <${sym}>:/,/^$/p" | sed '/^$/d'
 }
 
+# Like extract_func but uses literal string matching (for demangled C++ names with <>)
+extract_func_literal() {
+    local disasm="$1"
+    local sym="$2"
+    echo "$disasm" | awk -v sym="<${sym}>:" '
+        index($0, sym) > 0 { found=1 }
+        found { if (/^$/) exit; print }
+    '
+}
+
 {
     echo "# Symbol Comparison: queue.h (ref) vs queuepp.hpp (new)"
     echo ""
@@ -49,6 +59,28 @@ extract_func() {
         echo ""
         echo '```asm'
         extract_func "$DISASM_CPP" "$new_sym"
+        echo '```'
+        echo ""
+    done
+
+    # NEVER_INLINE helper functions (cpp only, demangled names)
+    NOINLINE_FUNCS=(
+        "WaitTail|queuepp::SPSCQueueIndexer<float, 4ul>::WaitTail(unsigned int)"
+        "WakeTail|queuepp::SPSCQueueIndexer<float, 4ul>::WakeTail()"
+        "WaitHead|queuepp::SPSCQueueIndexer<float, 4ul>::WaitHead(unsigned int)"
+        "WakeHead|queuepp::SPSCQueueIndexer<float, 4ul>::WakeHead()"
+    )
+
+    echo "# NEVER_INLINE helpers (queuepp.hpp)"
+    echo ""
+
+    for entry in "${NOINLINE_FUNCS[@]}"; do
+        IFS='|' read -r label sym <<< "$entry"
+
+        echo "## ${label}"
+        echo ""
+        echo '```asm'
+        extract_func_literal "$DISASM_CPP" "$sym"
         echo '```'
         echo ""
     done

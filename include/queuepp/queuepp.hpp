@@ -101,10 +101,11 @@ protected:
     }
 
 
-    /// Blocks until the consumer commits, returns updated tail value
+    /// Blocks until the consumer commits, returns updated tail value.
+    /// NEVER_INLINE keeps syscall register clobbers off the fast path.
     NEVER_INLINE std::uint32_t WaitTail(std::uint32_t tail)
     {
-        std::atomic_fetch_add_explicit(&m_waiters.tail, 1u, std::memory_order_relaxed);
+        std::atomic_fetch_add_explicit(&m_waiters.tail, 1u, std::memory_order_acquire);
 
         detail::futex_wait(&m_tail.committed, tail);
         tail = std::atomic_load_explicit(&m_tail.committed, std::memory_order_acquire);
@@ -113,16 +114,18 @@ protected:
         return tail;
     }
 
-    /// Wakes one producer blocked on tail; NEVER_INLINE keeps syscall clobbers off the fast path
+    /// Wakes one producer blocked on tail.
+    /// NEVER_INLINE keeps syscall register clobbers off the fast path.
     NEVER_INLINE void WakeTail()
     {
         detail::futex_wake(&m_tail.committed);
     }
 
-    /// Blocks until the producer commits, returns updated head value
+    /// Blocks until the producer commits, returns updated head value.
+    /// NEVER_INLINE keeps syscall register clobbers off the fast path.
     NEVER_INLINE std::uint32_t WaitHead(std::uint32_t head)
     {
-        std::atomic_fetch_add_explicit(&m_waiters.head, 1u, std::memory_order_relaxed);
+        std::atomic_fetch_add_explicit(&m_waiters.head, 1u, std::memory_order_acquire);
 
         detail::futex_wait(&m_head.committed, head);
         head = std::atomic_load_explicit(&m_head.committed, std::memory_order_acquire);
@@ -131,7 +134,8 @@ protected:
         return head;
     }
 
-    /// Wakes one consumer blocked on head; NEVER_INLINE keeps syscall clobbers off the fast path
+    /// Wakes one consumer blocked on head.
+    /// NEVER_INLINE keeps syscall register clobbers off the fast path.
     NEVER_INLINE void WakeHead()
     {
         detail::futex_wake(&m_head.committed);
@@ -183,7 +187,7 @@ protected:
             c = count;
         }
 
-        std::atomic_fetch_add_explicit(&m_head.committed, c, std::memory_order_release);
+        std::atomic_fetch_add_explicit(&m_head.committed, c, std::memory_order_acq_rel);
 
         [[unlikely]] if (std::atomic_load_explicit(&m_waiters.head, std::memory_order_relaxed)) {
             WakeHead();
@@ -222,7 +226,7 @@ protected:
             c = count;
         }
 
-        std::atomic_fetch_add_explicit(&m_tail.committed, c, std::memory_order_release);
+        std::atomic_fetch_add_explicit(&m_tail.committed, c, std::memory_order_acq_rel);
 
         [[unlikely]] if (std::atomic_load_explicit(&m_waiters.tail, std::memory_order_relaxed)) {
             WakeTail();
