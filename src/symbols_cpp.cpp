@@ -23,7 +23,7 @@ __attribute__((used)) inline int new_spsc_prepare_push(void* data)
 
 /* --- commit_push --- */
 
-__attribute__((used)) inline void new_spsc_commit_push(unsigned int prepared_index, void* data)
+__attribute__((used)) inline void new_spsc_commit_push([[maybe_unused]] unsigned int prepared_index, void* data)
 {
     auto queue = reinterpret_cast<Indexer*>(data);
     queue->CommitPush();
@@ -48,7 +48,7 @@ __attribute__((used)) inline int new_spsc_prepare_consume(void* data)
 
 /* --- commit_consume --- */
 
-__attribute__((used)) inline void new_spsc_commit_consume(unsigned int prepared_index, void* data)
+__attribute__((used)) inline void new_spsc_commit_consume([[maybe_unused]] unsigned int prepared_index, void* data)
 {
     auto queue = reinterpret_cast<Indexer*>(data);
     queue->CommitConsume();

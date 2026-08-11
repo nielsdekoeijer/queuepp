@@ -32,6 +32,7 @@
           shellHook = ''
             PS1="(dev) $PS1"
             export CMAKE_EXPORT_COMPILE_COMMANDS=1
+            export CLANGD_FLAGS="--query-driver=${cross.clangStdenv.cc}/bin/*"
           '';
         };
       });

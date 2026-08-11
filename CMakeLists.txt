@@ -16,11 +16,11 @@ add_library(symbols_cpp src/symbols_cpp.cpp)
 
 target_include_directories(bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(bench PRIVATE Threads::Threads)
-target_compile_options(bench PRIVATE -O3 -march=native -Wall -Wextra)
+target_compile_options(bench PRIVATE -O3 -Wall -Wextra)
 
 target_include_directories(symbols_c PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_compile_options(symbols_c PRIVATE -O3 -march=native -Wall -Wextra -g)
+target_compile_options(symbols_c PRIVATE -O3 -Wall -Wextra -g)
 
 target_include_directories(symbols_cpp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(symbols_cpp PRIVATE Threads::Threads)
-target_compile_options(symbols_cpp PRIVATE -O3 -march=native -Wall -Wextra -g)
+target_compile_options(symbols_cpp PRIVATE -O3 -Wall -Wextra -g)

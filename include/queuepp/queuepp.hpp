@@ -89,7 +89,7 @@ public:
 
 protected:
     /// Returns how many entries are currently occupied (head - tail)
-    std::uint32_t inline UsedCount(const std::uint32_t head, const std::uint32_t tail) const
+    ALWAYS_INLINE std::uint32_t UsedCount(const std::uint32_t head, const std::uint32_t tail) const
     {
         return head - tail;
     }
